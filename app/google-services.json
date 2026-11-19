@@ -52,11 +52,11 @@
       },
       "oauth_client": [
         {
-          "client_id": "396740286096-9lboof7bec848sv926qqh2bi8i3vhom3.apps.googleusercontent.com",
+          "client_id": "396740286096-ldbahkaq9nlgabst9b1ukgk8l2u32st8.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
             "package_name": "com.gossaigaon.rider",
-            "certificate_hash": "30ea37f5280c580f007aa49d81645ebadd8dea02"
+            "certificate_hash": "efa90c04c6cd9501adbd710046aa50e10c936b54"
           }
         },
         {
