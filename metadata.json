@@ -1,0 +1,8 @@
+{
+  "name": "Chutki Rider",
+  "description": "Smart Multi-Store Rider Terminal for Gossaigaon Bazar with live Firebase Realtime Database sync, Store Pickup OTP & Customer PIN verification, live GPS tracking, COD cash ledger, and Admin controls.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
