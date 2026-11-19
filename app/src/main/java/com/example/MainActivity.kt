@@ -19,7 +19,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.app.ActivityCompat
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -79,6 +78,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -90,6 +90,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -97,10 +98,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.notifications.FleetAppForegroundTracker
 import com.example.notifications.FleetNotificationHelper
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import com.example.ui.components.AdminAlertsCluster
 import com.example.ui.components.ApprovalPendingBanner
 import com.example.ui.components.CashLimitBanner
@@ -136,6 +133,10 @@ import com.example.ui.theme.TextMuted
 import com.example.viewmodel.AuthUiState
 import com.example.viewmodel.FleetViewModel
 import com.example.viewmodel.RiderTab
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     private val pendingTargetTab = mutableStateOf<String?>(null)
@@ -232,10 +233,36 @@ fun FleetRootScreen(
     val context = LocalContext.current
     val activity = context.findActivity()
     val lifecycleOwner = LocalLifecycleOwner.current
+    var askedStartupPermsOnce by rememberSaveable { mutableStateOf(false) }
     var askedNotifOnce by rememberSaveable { mutableStateOf(false) }
     var notifPermissionDeniedOnce by rememberSaveable { mutableStateOf(false) }
-
     var locationPermissionDeniedOnce by rememberSaveable { mutableStateOf(false) }
+
+    val startupPermissions = remember {
+        buildList {
+            add(Manifest.permission.ACCESS_FINE_LOCATION)
+            add(Manifest.permission.ACCESS_COARSE_LOCATION)
+            add(Manifest.permission.CAMERA)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }.toTypedArray()
+    }
+
+    val startupPermissionsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { perms ->
+        val locGranted = perms[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            perms[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (!locGranted) locationPermissionDeniedOnce = true
+        viewModel.onLocationPermissionResult(locGranted)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val notifGranted = perms[Manifest.permission.POST_NOTIFICATIONS] == true
+            if (!notifGranted) notifPermissionDeniedOnce = true
+            viewModel.onNotificationPermissionResult(notifGranted)
+        }
+    }
 
     val locationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -300,6 +327,14 @@ fun FleetRootScreen(
             }
         } else {
             openNotificationSettings()
+        }
+    }
+
+    // Request all core runtime permissions once on app launch
+    LaunchedEffect(Unit) {
+        if (!askedStartupPermsOnce) {
+            askedStartupPermsOnce = true
+            startupPermissionsLauncher.launch(startupPermissions)
         }
     }
 
@@ -430,403 +465,403 @@ fun FleetRootScreen(
                         onSwitchAccount = viewModel::signOut
                     )
                 } else {
-                val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
-                val drawerScope = rememberCoroutineScope()
-                val quickTabs = setOf(RiderTab.ACTIVE, RiderTab.EARNINGS, RiderTab.COD_CASH)
-                val openTicketsCount = uiState.feedbacks.count { it.status != "RESOLVED" }
+                    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+                    val drawerScope = rememberCoroutineScope()
+                    val quickTabs = setOf(RiderTab.ACTIVE, RiderTab.EARNINGS, RiderTab.COD_CASH)
+                    val openTicketsCount = uiState.feedbacks.count { it.status != "RESOLVED" }
 
-                if (drawerState.isOpen) {
-                    BackHandler { drawerScope.launch { drawerState.close() } }
-                } else if (uiState.selectedTab != RiderTab.ACTIVE) {
-                    BackHandler { viewModel.selectTab(RiderTab.ACTIVE) }
-                }
-
-                ModalNavigationDrawer(
-                    drawerState = drawerState,
-                    drawerContent = {
-                        FleetNavigationDrawerSheet(
-                            rider = uiState.rider,
-                            selectedTab = uiState.selectedTab,
-                            activeTripsCount = uiState.activeTrips.size,
-                            completedTripsCount = uiState.completedTrips.size,
-                            availablePayoutBalance = uiState.availablePayoutBalance,
-                            netCashInHand = uiState.netCashInHand,
-                            maxCashLimit = uiState.adminSettings.maxRiderCashLimit,
-                            openTicketsCount = openTicketsCount,
-                            onSelectTab = { tab ->
-                                viewModel.selectTab(tab)
-                                drawerScope.launch { drawerState.close() }
-                            },
-                            onCloseDrawer = { drawerScope.launch { drawerState.close() } },
-                            onSignOut = {
-                                drawerScope.launch { drawerState.close() }
-                                viewModel.signOut()
-                            }
-                        )
+                    if (drawerState.isOpen) {
+                        BackHandler { drawerScope.launch { drawerState.close() } }
+                    } else if (uiState.selectedTab != RiderTab.ACTIVE) {
+                        BackHandler { viewModel.selectTab(RiderTab.ACTIVE) }
                     }
-                ) {
-                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                    val isWideScreen = maxWidth >= 600.dp
 
-                    Scaffold(
-                        containerColor = TerminalBg,
-                        contentWindowInsets = WindowInsets.navigationBars,
-                        bottomBar = {
-                            if (!isWideScreen) {
-                                NavigationBar(
-                                    containerColor = TerminalSurface,
-                                    tonalElevation = 4.dp
-                                ) {
-                                    fleetQuickNavItems.forEach { item ->
-                                        val selected = if (item.tab != null) {
-                                            uiState.selectedTab == item.tab
-                                        } else {
-                                            drawerState.isOpen || uiState.selectedTab !in quickTabs
-                                        }
-                                        val activeBadgeCount = if (item.tab == RiderTab.ACTIVE) uiState.activeTrips.size else 0
-                                        NavigationBarItem(
-                                            selected = selected,
-                                            onClick = {
-                                                if (item.tab != null) {
-                                                    viewModel.selectTab(item.tab)
-                                                } else {
-                                                    drawerScope.launch { drawerState.open() }
-                                                }
-                                            },
-                                            icon = {
-                                                BadgedBox(
-                                                    badge = {
-                                                        if (activeBadgeCount > 0) {
-                                                            Badge(containerColor = EmeraldPrimary, contentColor = Color.White) {
-                                                                Text(activeBadgeCount.toString())
-                                                            }
-                                                        }
-                                                    }
-                                                ) {
-                                                    Icon(
-                                                        imageVector = if (selected) item.selectedIcon else item.unselectedIcon,
-                                                        contentDescription = stringResource(item.labelRes)
-                                                    )
-                                                }
-                                            },
-                                            label = {
-                                                Text(
-                                                    text = stringResource(item.labelRes),
-                                                    style = MaterialTheme.typography.labelMedium
-                                                )
-                                            },
-                                            colors = NavigationBarItemDefaults.colors(
-                                                selectedIconColor = EmeraldPrimary,
-                                                selectedTextColor = EmeraldPrimary,
-                                                unselectedIconColor = TextMuted,
-                                                unselectedTextColor = TextMuted,
-                                                indicatorColor = EmeraldPrimary.copy(alpha = 0.16f)
-                                            ),
-                                            modifier = Modifier.testTag(item.testTag)
-                                        )
-                                    }
+                    ModalNavigationDrawer(
+                        drawerState = drawerState,
+                        drawerContent = {
+                            FleetNavigationDrawerSheet(
+                                rider = uiState.rider,
+                                selectedTab = uiState.selectedTab,
+                                activeTripsCount = uiState.activeTrips.size,
+                                completedTripsCount = uiState.completedTrips.size,
+                                availablePayoutBalance = uiState.availablePayoutBalance,
+                                netCashInHand = uiState.netCashInHand,
+                                maxCashLimit = uiState.adminSettings.maxRiderCashLimit,
+                                openTicketsCount = openTicketsCount,
+                                onSelectTab = { tab ->
+                                    viewModel.selectTab(tab)
+                                    drawerScope.launch { drawerState.close() }
+                                },
+                                onCloseDrawer = { drawerScope.launch { drawerState.close() } },
+                                onSignOut = {
+                                    drawerScope.launch { drawerState.close() }
+                                    viewModel.signOut()
                                 }
-                            }
+                            )
                         }
-                    ) { innerPadding ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(innerPadding)
-                        ) {
-                            if (isWideScreen) {
-                                NavigationRail(
-                                    containerColor = TerminalSurface,
-                                    modifier = Modifier.fillMaxHeight().statusBarsPadding()
-                                ) {
-                                    fleetQuickNavItems.forEach { item ->
-                                        val selected = if (item.tab != null) {
-                                            uiState.selectedTab == item.tab
-                                        } else {
-                                            drawerState.isOpen || uiState.selectedTab !in quickTabs
-                                        }
-                                        val activeBadgeCount = if (item.tab == RiderTab.ACTIVE) uiState.activeTrips.size else 0
-                                        NavigationRailItem(
-                                            selected = selected,
-                                            onClick = {
-                                                if (item.tab != null) {
-                                                    viewModel.selectTab(item.tab)
+                    ) {
+                        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                            val isWideScreen = maxWidth >= 600.dp
+
+                            Scaffold(
+                                containerColor = TerminalBg,
+                                contentWindowInsets = WindowInsets.navigationBars,
+                                bottomBar = {
+                                    if (!isWideScreen) {
+                                        NavigationBar(
+                                            containerColor = TerminalSurface,
+                                            tonalElevation = 4.dp
+                                        ) {
+                                            fleetQuickNavItems.forEach { item ->
+                                                val selected = if (item.tab != null) {
+                                                    uiState.selectedTab == item.tab
                                                 } else {
-                                                    drawerScope.launch { drawerState.open() }
+                                                    drawerState.isOpen || uiState.selectedTab !in quickTabs
                                                 }
-                                            },
-                                            icon = {
-                                                BadgedBox(
-                                                    badge = {
-                                                        if (activeBadgeCount > 0) {
-                                                            Badge(containerColor = EmeraldPrimary, contentColor = Color.White) {
-                                                                Text(activeBadgeCount.toString())
-                                                            }
+                                                val activeBadgeCount = if (item.tab == RiderTab.ACTIVE) uiState.activeTrips.size else 0
+                                                NavigationBarItem(
+                                                    selected = selected,
+                                                    onClick = {
+                                                        if (item.tab != null) {
+                                                            viewModel.selectTab(item.tab)
+                                                        } else {
+                                                            drawerScope.launch { drawerState.open() }
                                                         }
-                                                    }
-                                                ) {
-                                                    Icon(
-                                                        imageVector = if (selected) item.selectedIcon else item.unselectedIcon,
-                                                        contentDescription = stringResource(item.labelRes)
-                                                    )
-                                                }
-                                            },
-                                            label = {
-                                                Text(
-                                                    text = stringResource(item.labelRes),
-                                                    style = MaterialTheme.typography.labelSmall
+                                                    },
+                                                    icon = {
+                                                        BadgedBox(
+                                                            badge = {
+                                                                if (activeBadgeCount > 0) {
+                                                                    Badge(containerColor = EmeraldPrimary, contentColor = Color.White) {
+                                                                        Text(activeBadgeCount.toString())
+                                                                    }
+                                                                }
+                                                            }
+                                                        ) {
+                                                            Icon(
+                                                                imageVector = if (selected) item.selectedIcon else item.unselectedIcon,
+                                                                contentDescription = stringResource(item.labelRes)
+                                                            )
+                                                        }
+                                                    },
+                                                    label = {
+                                                        Text(
+                                                            text = stringResource(item.labelRes),
+                                                            style = MaterialTheme.typography.labelMedium
+                                                        )
+                                                    },
+                                                    colors = NavigationBarItemDefaults.colors(
+                                                        selectedIconColor = EmeraldPrimary,
+                                                        selectedTextColor = EmeraldPrimary,
+                                                        unselectedIconColor = TextMuted,
+                                                        unselectedTextColor = TextMuted,
+                                                        indicatorColor = EmeraldPrimary.copy(alpha = 0.16f)
+                                                    ),
+                                                    modifier = Modifier.testTag(item.testTag)
                                                 )
-                                            },
-                                            colors = NavigationRailItemDefaults.colors(
-                                                selectedIconColor = EmeraldPrimary,
-                                                selectedTextColor = EmeraldPrimary,
-                                                unselectedIconColor = TextMuted,
-                                                unselectedTextColor = TextMuted,
-                                                indicatorColor = EmeraldPrimary.copy(alpha = 0.16f)
-                                            ),
-                                            modifier = Modifier.testTag(item.testTag)
-                                        )
+                                            }
+                                        }
                                     }
                                 }
-                            }
-
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .statusBarsPadding(),
-                                contentAlignment = Alignment.TopCenter
-                            ) {
-                                Column(
+                            ) { innerPadding ->
+                                Row(
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .widthIn(max = 600.dp)
+                                        .padding(innerPadding)
                                 ) {
-                                    SecurityRibbon()
-                                    ConnectivityStatusBanner(
-                                        isNetworkOnline = uiState.isNetworkOnline,
-                                        isFirebaseConnected = uiState.isFirebaseConnected
-                                    )
-                                    AdminAlertsCluster(
-                                        rider = uiState.rider,
-                                        adminSettings = uiState.adminSettings
-                                    )
-                                    RiderHeader(
-                                        rider = uiState.rider,
-                                        soundEnabled = uiState.soundEnabled,
-                                        onOpenMenu = { drawerScope.launch { drawerState.open() } },
-                                        onToggleSound = viewModel::toggleSound,
-                                        onToggleDuty = viewModel::toggleDutyStatus
-                                    )
-                                    GpsRadarBar(
-                                        gpsState = uiState.gpsState,
-                                        speedKmh = uiState.riderSpeedKmh,
-                                        onRequestPermission = requestLocationPermission,
-                                        onForceSync = viewModel::forceGpsSync
-                                    )
-                                    SecurityThreatBanner(
-                                        report = uiState.securityReport,
-                                        onOpenSecuritySettings = { viewModel.selectTab(RiderTab.SETTINGS) }
-                                    )
-                                    if (!uiState.hasNotificationPermission && uiState.savedAuthPrefs.backgroundAlertsEnabled) {
-                                        Surface(
-                                            color = AmberWarning.copy(alpha = 0.14f),
-                                            border = BorderStroke(1.dp, AmberWarning.copy(alpha = 0.6f)),
-                                            shape = RoundedCornerShape(12.dp),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(horizontal = 14.dp, vertical = 4.dp)
+                                    if (isWideScreen) {
+                                        NavigationRail(
+                                            containerColor = TerminalSurface,
+                                            modifier = Modifier.fillMaxHeight().statusBarsPadding()
                                         ) {
-                                            Row(
-                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.SpaceBetween
-                                            ) {
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    modifier = Modifier.weight(1f)
-                                                ) {
-                                                    Icon(
-                                                        Icons.Default.NotificationsOff,
-                                                        contentDescription = null,
-                                                        tint = AmberWarning,
-                                                        modifier = Modifier.size(16.dp)
-                                                    )
-                                                    Spacer(Modifier.width(8.dp))
-                                                    Text(
-                                                        text = "Enable background alerts for live trips",
-                                                        style = MaterialTheme.typography.labelMedium,
-                                                        color = AmberWarning
-                                                    )
+                                            fleetQuickNavItems.forEach { item ->
+                                                val selected = if (item.tab != null) {
+                                                    uiState.selectedTab == item.tab
+                                                } else {
+                                                    drawerState.isOpen || uiState.selectedTab !in quickTabs
                                                 }
-                                                Spacer(Modifier.width(8.dp))
-                                                Button(
-                                                    onClick = requestNotifications,
-                                                    colors = ButtonDefaults.buttonColors(containerColor = AmberWarning),
-                                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                                    shape = RoundedCornerShape(8.dp),
-                                                    modifier = Modifier.testTag("banner_enable_notifications_button")
-                                                ) {
-                                                    Text("Enable", color = Color.Black, style = MaterialTheme.typography.labelSmall)
-                                                }
+                                                val activeBadgeCount = if (item.tab == RiderTab.ACTIVE) uiState.activeTrips.size else 0
+                                                NavigationRailItem(
+                                                    selected = selected,
+                                                    onClick = {
+                                                        if (item.tab != null) {
+                                                            viewModel.selectTab(item.tab)
+                                                        } else {
+                                                            drawerScope.launch { drawerState.open() }
+                                                        }
+                                                    },
+                                                    icon = {
+                                                        BadgedBox(
+                                                            badge = {
+                                                                if (activeBadgeCount > 0) {
+                                                                    Badge(containerColor = EmeraldPrimary, contentColor = Color.White) {
+                                                                        Text(activeBadgeCount.toString())
+                                                                    }
+                                                                }
+                                                            }
+                                                        ) {
+                                                            Icon(
+                                                                imageVector = if (selected) item.selectedIcon else item.unselectedIcon,
+                                                                contentDescription = stringResource(item.labelRes)
+                                                            )
+                                                        }
+                                                    },
+                                                    label = {
+                                                        Text(
+                                                            text = stringResource(item.labelRes),
+                                                            style = MaterialTheme.typography.labelSmall
+                                                        )
+                                                    },
+                                                    colors = NavigationRailItemDefaults.colors(
+                                                        selectedIconColor = EmeraldPrimary,
+                                                        selectedTextColor = EmeraldPrimary,
+                                                        unselectedIconColor = TextMuted,
+                                                        unselectedTextColor = TextMuted,
+                                                        indicatorColor = EmeraldPrimary.copy(alpha = 0.16f)
+                                                    ),
+                                                    modifier = Modifier.testTag(item.testTag)
+                                                )
                                             }
                                         }
                                     }
-                                    CashLimitBanner(
-                                        netCashInHand = uiState.netCashInHand,
-                                        maxCashLimit = uiState.adminSettings.maxRiderCashLimit,
-                                        onDepositClick = {
-                                            viewModel.selectTab(RiderTab.COD_CASH)
-                                            viewModel.openCodDepositModal()
-                                        }
-                                    )
-                                    ApprovalPendingBanner(approved = uiState.rider.approved)
 
-                                    Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                                        AnimatedContent(
-                                            targetState = uiState.selectedTab,
-                                            transitionSpec = {
-                                                fadeIn(animationSpec = tween(180)) togetherWith fadeOut(animationSpec = tween(140))
-                                            },
-                                            label = "rider_tab_transition"
-                                        ) { tab ->
-                                            when (tab) {
-                                                RiderTab.ACTIVE -> ActiveTripsScreen(
-                                                    activeTrips = uiState.activeTrips,
-                                                    stores = uiState.stores,
-                                                    adminSettings = uiState.adminSettings,
-                                                    countdownByTrip = uiState.countdownByTrip,
-                                                    emergencyRequests = uiState.emergencyRequests,
-                                                    riderLat = uiState.riderLat ?: uiState.rider.lat,
-                                                    riderLng = uiState.riderLng ?: uiState.rider.lng,
-                                                    getRiderFee = viewModel::getRiderFeeForOrder,
-                                                    onLocationPermissionGranted = { viewModel.onLocationPermissionResult(true) },
-                                                    onAcceptTrip = viewModel::acceptTrip,
-                                                    onPassTripDirect = viewModel::passTripToNextRider,
-                                                    onOpenPassModal = viewModel::openPassTripModal,
-                                                    onOpenPickupVerify = viewModel::openPickupVerifyModal,
-                                                    onStartDoorstep = viewModel::startCustomerDoorstepTrip,
-                                                    onOpenDeliveryVerify = viewModel::openDeliveryVerifyModal,
-                                                    onOpenSosModal = viewModel::openEmergencySosModal
-                                                )
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .statusBarsPadding(),
+                                        contentAlignment = Alignment.TopCenter
+                                    ) {
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .widthIn(max = 600.dp)
+                                        ) {
+                                            SecurityRibbon()
+                                            ConnectivityStatusBanner(
+                                                isNetworkOnline = uiState.isNetworkOnline,
+                                                isFirebaseConnected = uiState.isFirebaseConnected
+                                            )
+                                            AdminAlertsCluster(
+                                                rider = uiState.rider,
+                                                adminSettings = uiState.adminSettings
+                                            )
+                                            RiderHeader(
+                                                rider = uiState.rider,
+                                                soundEnabled = uiState.soundEnabled,
+                                                onOpenMenu = { drawerScope.launch { drawerState.open() } },
+                                                onToggleSound = viewModel::toggleSound,
+                                                onToggleDuty = viewModel::toggleDutyStatus
+                                            )
+                                            GpsRadarBar(
+                                                gpsState = uiState.gpsState,
+                                                speedKmh = uiState.riderSpeedKmh,
+                                                onRequestPermission = requestLocationPermission,
+                                                onForceSync = viewModel::forceGpsSync
+                                            )
+                                            SecurityThreatBanner(
+                                                report = uiState.securityReport,
+                                                onOpenSecuritySettings = { viewModel.selectTab(RiderTab.SETTINGS) }
+                                            )
+                                            if (!uiState.hasNotificationPermission && uiState.savedAuthPrefs.backgroundAlertsEnabled) {
+                                                Surface(
+                                                    color = AmberWarning.copy(alpha = 0.14f),
+                                                    border = BorderStroke(1.dp, AmberWarning.copy(alpha = 0.6f)),
+                                                    shape = RoundedCornerShape(12.dp),
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(horizontal = 14.dp, vertical = 4.dp)
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.SpaceBetween
+                                                    ) {
+                                                        Row(
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            modifier = Modifier.weight(1f)
+                                                        ) {
+                                                            Icon(
+                                                                Icons.Default.NotificationsOff,
+                                                                contentDescription = null,
+                                                                tint = AmberWarning,
+                                                                modifier = Modifier.size(16.dp)
+                                                            )
+                                                            Spacer(Modifier.width(8.dp))
+                                                            Text(
+                                                                text = "Enable background alerts for live trips",
+                                                                style = MaterialTheme.typography.labelMedium,
+                                                                color = AmberWarning
+                                                            )
+                                                        }
+                                                        Spacer(Modifier.width(8.dp))
+                                                        Button(
+                                                            onClick = requestNotifications,
+                                                            colors = ButtonDefaults.buttonColors(containerColor = AmberWarning),
+                                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                                            shape = RoundedCornerShape(8.dp),
+                                                            modifier = Modifier.testTag("banner_enable_notifications_button")
+                                                        ) {
+                                                            Text("Enable", color = Color.Black, style = MaterialTheme.typography.labelSmall)
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            CashLimitBanner(
+                                                netCashInHand = uiState.netCashInHand,
+                                                maxCashLimit = uiState.adminSettings.maxRiderCashLimit,
+                                                onDepositClick = {
+                                                    viewModel.selectTab(RiderTab.COD_CASH)
+                                                    viewModel.openCodDepositModal()
+                                                }
+                                            )
+                                            ApprovalPendingBanner(approved = uiState.rider.approved)
 
-                                                RiderTab.DASHBOARD -> ShiftDashboardScreen(
-                                                    adminSettings = uiState.adminSettings,
-                                                    totalRiderEarned = uiState.totalRiderEarned,
-                                                    todayTripsCount = uiState.todayTripsCount,
-                                                    todayEarnings = uiState.todayEarnings,
-                                                    todayCodCollected = uiState.todayCodCollected,
-                                                    isOnline = uiState.rider.online && !uiState.rider.suspended,
-                                                    shiftElapsedSeconds = uiState.shiftElapsedSeconds,
-                                                    weekTripsCount = uiState.weekTripsCount,
-                                                    weekEarnings = uiState.weekEarnings,
-                                                    completedTrips = uiState.completedTrips,
-                                                    stores = uiState.stores
-                                                )
+                                            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                                                AnimatedContent(
+                                                    targetState = uiState.selectedTab,
+                                                    transitionSpec = {
+                                                        fadeIn(animationSpec = tween(180)) togetherWith fadeOut(animationSpec = tween(140))
+                                                    },
+                                                    label = "rider_tab_transition"
+                                                ) { tab ->
+                                                    when (tab) {
+                                                        RiderTab.ACTIVE -> ActiveTripsScreen(
+                                                            activeTrips = uiState.activeTrips,
+                                                            stores = uiState.stores,
+                                                            adminSettings = uiState.adminSettings,
+                                                            countdownByTrip = uiState.countdownByTrip,
+                                                            emergencyRequests = uiState.emergencyRequests,
+                                                            riderLat = uiState.riderLat ?: uiState.rider.lat,
+                                                            riderLng = uiState.riderLng ?: uiState.rider.lng,
+                                                            getRiderFee = viewModel::getRiderFeeForOrder,
+                                                            onLocationPermissionGranted = { viewModel.onLocationPermissionResult(true) },
+                                                            onAcceptTrip = viewModel::acceptTrip,
+                                                            onPassTripDirect = viewModel::passTripToNextRider,
+                                                            onOpenPassModal = viewModel::openPassTripModal,
+                                                            onOpenPickupVerify = viewModel::openPickupVerifyModal,
+                                                            onStartDoorstep = viewModel::startCustomerDoorstepTrip,
+                                                            onOpenDeliveryVerify = viewModel::openDeliveryVerifyModal,
+                                                            onOpenSosModal = viewModel::openEmergencySosModal
+                                                        )
 
-                                                RiderTab.EARNINGS -> EarningsScreen(
-                                                    rider = uiState.rider,
-                                                    adminSettings = uiState.adminSettings,
-                                                    availablePayoutBalance = uiState.availablePayoutBalance,
-                                                    pendingPayoutAmount = uiState.pendingPayoutAmount,
-                                                    totalRiderEarned = uiState.totalRiderEarned,
-                                                    totalRiderPaidPayout = uiState.totalRiderPaidPayout,
-                                                    payouts = uiState.riderPayouts,
-                                                    onOpenWithdrawModal = viewModel::openPayoutModal,
-                                                    onOpenProfile = { viewModel.selectTab(RiderTab.PROFILE) }
-                                                )
+                                                        RiderTab.DASHBOARD -> ShiftDashboardScreen(
+                                                            adminSettings = uiState.adminSettings,
+                                                            totalRiderEarned = uiState.totalRiderEarned,
+                                                            todayTripsCount = uiState.todayTripsCount,
+                                                            todayEarnings = uiState.todayEarnings,
+                                                            todayCodCollected = uiState.todayCodCollected,
+                                                            isOnline = uiState.rider.online && !uiState.rider.suspended,
+                                                            shiftElapsedSeconds = uiState.shiftElapsedSeconds,
+                                                            weekTripsCount = uiState.weekTripsCount,
+                                                            weekEarnings = uiState.weekEarnings,
+                                                            completedTrips = uiState.completedTrips,
+                                                            stores = uiState.stores
+                                                        )
 
-                                                RiderTab.COD_CASH -> CodCashScreen(
-                                                    adminSettings = uiState.adminSettings,
-                                                    netCashInHand = uiState.netCashInHand,
-                                                    pendingCodSettlementAmount = uiState.pendingCodSettlementAmount,
-                                                    totalCodCollected = uiState.totalCodCollected,
-                                                    totalDeposited = uiState.totalDeposited,
-                                                    settlements = uiState.riderSettlements,
-                                                    onOpenDepositModal = viewModel::openCodDepositModal
-                                                )
+                                                        RiderTab.EARNINGS -> EarningsScreen(
+                                                            rider = uiState.rider,
+                                                            adminSettings = uiState.adminSettings,
+                                                            availablePayoutBalance = uiState.availablePayoutBalance,
+                                                            pendingPayoutAmount = uiState.pendingPayoutAmount,
+                                                            totalRiderEarned = uiState.totalRiderEarned,
+                                                            totalRiderPaidPayout = uiState.totalRiderPaidPayout,
+                                                            payouts = uiState.riderPayouts,
+                                                            onOpenWithdrawModal = viewModel::openPayoutModal,
+                                                            onOpenProfile = { viewModel.selectTab(RiderTab.PROFILE) }
+                                                        )
 
-                                                RiderTab.TRIP_HISTORY -> TripHistoryScreen(
-                                                    adminSettings = uiState.adminSettings,
-                                                    completedTrips = uiState.completedTrips,
-                                                    stores = uiState.stores
-                                                )
+                                                        RiderTab.COD_CASH -> CodCashScreen(
+                                                            adminSettings = uiState.adminSettings,
+                                                            netCashInHand = uiState.netCashInHand,
+                                                            pendingCodSettlementAmount = uiState.pendingCodSettlementAmount,
+                                                            totalCodCollected = uiState.totalCodCollected,
+                                                            totalDeposited = uiState.totalDeposited,
+                                                            settlements = uiState.riderSettlements,
+                                                            onOpenDepositModal = viewModel::openCodDepositModal
+                                                        )
 
-                                                RiderTab.RATINGS -> RatingsScreen(
-                                                    rider = uiState.rider,
-                                                    ratings = uiState.ratings
-                                                )
+                                                        RiderTab.TRIP_HISTORY -> TripHistoryScreen(
+                                                            adminSettings = uiState.adminSettings,
+                                                            completedTrips = uiState.completedTrips,
+                                                            stores = uiState.stores
+                                                        )
 
-                                                RiderTab.PROFILE -> ProfileScreen(
-                                                    rider = uiState.rider,
-                                                    email = auth.email,
-                                                    onOpenKyc = { viewModel.selectTab(RiderTab.KYC) },
-                                                    onSaveProfile = viewModel::saveRiderProfile
-                                                )
+                                                        RiderTab.RATINGS -> RatingsScreen(
+                                                            rider = uiState.rider,
+                                                            ratings = uiState.ratings
+                                                        )
 
-                                                RiderTab.KYC -> KycScreen(
-                                                    rider = uiState.rider,
-                                                    isKycSaving = uiState.isKycSaving,
-                                                    onSubmitKyc = viewModel::submitRiderKyc
-                                                )
+                                                        RiderTab.PROFILE -> ProfileScreen(
+                                                            rider = uiState.rider,
+                                                            email = auth.email,
+                                                            onOpenKyc = { viewModel.selectTab(RiderTab.KYC) },
+                                                            onSaveProfile = viewModel::saveRiderProfile
+                                                        )
 
-                                                RiderTab.SUPPORT -> SupportScreen(
-                                                    adminSettings = uiState.adminSettings,
-                                                    feedbacks = uiState.feedbacks,
-                                                    onOpenFeedbackModal = viewModel::openFeedbackModal
-                                                )
+                                                        RiderTab.KYC -> KycScreen(
+                                                            rider = uiState.rider,
+                                                            isKycSaving = uiState.isKycSaving,
+                                                            onSubmitKyc = viewModel::submitRiderKyc
+                                                        )
 
-                                                RiderTab.SETTINGS -> SystemSettingsScreen(
-                                                    rider = uiState.rider,
-                                                    adminSettings = uiState.adminSettings,
-                                                    hasQuickPinEnabled = uiState.savedAuthPrefs.quickPinUid == auth.uid &&
-                                                        uiState.savedAuthPrefs.quickPinHash.isNotBlank(),
-                                                    backgroundAlertsEnabled = uiState.savedAuthPrefs.backgroundAlertsEnabled,
-                                                    hasNotificationPermission = uiState.hasNotificationPermission,
-                                                    isBackgroundServiceActive = uiState.isBackgroundServiceActive,
-                                                    isNetworkOnline = uiState.isNetworkOnline,
-                                                    isFirebaseConnected = uiState.isFirebaseConnected,
-                                                    gpsState = uiState.gpsState,
-                                                    riderSpeedKmh = uiState.riderSpeedKmh,
-                                                    batteryPct = uiState.batteryPct,
-                                                    securityReport = uiState.securityReport,
-                                                    blockedThreatsCount = uiState.blockedThreatsCount,
-                                                    onRunSecurityScan = { viewModel.runSecurityShieldScan(showResultToast = true) },
-                                                    onForceGpsSync = viewModel::forceGpsSync,
-                                                    onToggleBackgroundAlerts = viewModel::setBackgroundAlertsEnabled,
-                                                    onRequestNotificationPermission = requestNotifications,
-                                                    onSendTestNotification = viewModel::sendTestNotification,
-                                                    onOpenAgreement = viewModel::openAgreementModal,
-                                                    onSetQuickPin = viewModel::setQuickShiftPin,
-                                                    onDisableQuickPin = viewModel::disableQuickShiftPin,
-                                                    onSignOut = viewModel::signOut
-                                                )
+                                                        RiderTab.SUPPORT -> SupportScreen(
+                                                            adminSettings = uiState.adminSettings,
+                                                            feedbacks = uiState.feedbacks,
+                                                            onOpenFeedbackModal = viewModel::openFeedbackModal
+                                                        )
+
+                                                        RiderTab.SETTINGS -> SystemSettingsScreen(
+                                                            rider = uiState.rider,
+                                                            adminSettings = uiState.adminSettings,
+                                                            hasQuickPinEnabled = uiState.savedAuthPrefs.quickPinUid == auth.uid &&
+                                                                uiState.savedAuthPrefs.quickPinHash.isNotBlank(),
+                                                            backgroundAlertsEnabled = uiState.savedAuthPrefs.backgroundAlertsEnabled,
+                                                            hasNotificationPermission = uiState.hasNotificationPermission,
+                                                            isBackgroundServiceActive = uiState.isBackgroundServiceActive,
+                                                            isNetworkOnline = uiState.isNetworkOnline,
+                                                            isFirebaseConnected = uiState.isFirebaseConnected,
+                                                            gpsState = uiState.gpsState,
+                                                            riderSpeedKmh = uiState.riderSpeedKmh,
+                                                            batteryPct = uiState.batteryPct,
+                                                            securityReport = uiState.securityReport,
+                                                            blockedThreatsCount = uiState.blockedThreatsCount,
+                                                            onRunSecurityScan = { viewModel.runSecurityShieldScan(showResultToast = true) },
+                                                            onForceGpsSync = viewModel::forceGpsSync,
+                                                            onToggleBackgroundAlerts = viewModel::setBackgroundAlertsEnabled,
+                                                            onRequestNotificationPermission = requestNotifications,
+                                                            onSendTestNotification = viewModel::sendTestNotification,
+                                                            onOpenAgreement = viewModel::openAgreementModal,
+                                                            onSetQuickPin = viewModel::setQuickShiftPin,
+                                                            onDisableQuickPin = viewModel::disableQuickShiftPin,
+                                                            onSignOut = viewModel::signOut
+                                                        )
+                                                    }
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
+
+                            FleetModalsHost(
+                                activeModal = uiState.activeModal,
+                                isBusy = uiState.isModalBusy,
+                                rider = uiState.rider,
+                                adminSettings = uiState.adminSettings,
+                                availablePayoutBalance = uiState.availablePayoutBalance,
+                                netCashInHand = uiState.netCashInHand,
+                                pendingCodSettlementAmount = uiState.pendingCodSettlementAmount,
+                                onDismiss = viewModel::closeModal,
+                                onConfirmPickupOtp = viewModel::confirmPickupOtp,
+                                onConfirmDeliveryPin = viewModel::confirmDeliveryPin,
+                                onConfirmPassTrip = viewModel::confirmPassTrip,
+                                onSubmitEmergencySos = viewModel::submitEmergencySos,
+                                onSubmitPayout = viewModel::submitPayoutRequest,
+                                onSubmitCodDeposit = viewModel::submitCodDeposit,
+                                onSubmitFeedback = viewModel::submitFeedback
+                            )
                         }
                     }
-
-                    FleetModalsHost(
-                        activeModal = uiState.activeModal,
-                        isBusy = uiState.isModalBusy,
-                        rider = uiState.rider,
-                        adminSettings = uiState.adminSettings,
-                        availablePayoutBalance = uiState.availablePayoutBalance,
-                        netCashInHand = uiState.netCashInHand,
-                        pendingCodSettlementAmount = uiState.pendingCodSettlementAmount,
-                        onDismiss = viewModel::closeModal,
-                        onConfirmPickupOtp = viewModel::confirmPickupOtp,
-                        onConfirmDeliveryPin = viewModel::confirmDeliveryPin,
-                        onConfirmPassTrip = viewModel::confirmPassTrip,
-                        onSubmitEmergencySos = viewModel::submitEmergencySos,
-                        onSubmitPayout = viewModel::submitPayoutRequest,
-                        onSubmitCodDeposit = viewModel::submitCodDeposit,
-                        onSubmitFeedback = viewModel::submitFeedback
-                    )
-                }
-                }
                 }
             }
         }
